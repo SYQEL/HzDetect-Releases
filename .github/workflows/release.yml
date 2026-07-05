@@ -50,6 +50,20 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: cargo install trusted-signing-cli
 
+      # Fail fast with the CLI's real error (the bundler swallows it): sign a
+      # scratch PE before spending minutes on the Rust build. Account/profile
+      # here must match tauri.conf.json's signCommand.
+      - name: Verify Trusted Signing auth (Windows)
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          Copy-Item C:\Windows\System32\notepad.exe probe.exe
+          trusted-signing-cli -e https://eus.codesigning.azure.net/ -a SYQEL -c SYQEL probe.exe
+
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
