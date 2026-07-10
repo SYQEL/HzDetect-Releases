@@ -27,6 +27,11 @@ jobs:
             args: --target universal-apple-darwin
           - platform: windows-latest
             args: ''
+          # Microsoft Store flavor: self-updater compiled out (the Store
+          # updates it); uploaded as *-msstore-setup.exe next to the others.
+          - platform: windows-latest
+            args: --features msstore --config src-tauri/tauri.msstore.conf.json
+            store: msstore
     runs-on: ${{ matrix.platform }}
     steps:
       # 1. Pull the private source from GitLab (adjust the path to your repo).
@@ -80,12 +85,32 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         with:
           projectPath: source/desktop/app
-          tagName: ${{ github.ref_name }}
-          releaseName: 'HZ Detect ${{ github.ref_name }}'
+          # The store-flavor job builds only; its upload step below renames
+          # the installer first so it can't collide with the standard one.
+          tagName: ${{ matrix.store != 'msstore' && github.ref_name || '' }}
+          releaseName: ${{ matrix.store != 'msstore' && format('HZ Detect {0}', github.ref_name) || '' }}
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+      - name: Upload Store installer to the draft release
+        if: matrix.store == 'msstore'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $exe = Get-ChildItem source/desktop/app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          $new = $exe.FullName -replace '-setup\.exe$', '-msstore-setup.exe'
+          Rename-Item $exe.FullName $new
+          # The draft release is created by a sibling job — wait for it.
+          $tag = '${{ github.ref_name }}'
+          for ($i = 0; $i -lt 30; $i++) {
+            gh release view $tag --repo ${{ github.repository }} *> $null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 60
+          }
+          gh release upload $tag $new --repo ${{ github.repository }} --clobber
 
 # NOTE: bump version in desktop/app/src-tauri/tauri.conf.json (+ Cargo.toml) to match each tag.
 # The MAS build is produced separately on your Windows/Mac per the SYQEL "App Store overlay" flow.
