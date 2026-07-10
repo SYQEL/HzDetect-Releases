@@ -28,9 +28,9 @@ jobs:
           - platform: windows-latest
             args: ''
           # Microsoft Store flavor: self-updater compiled out (the Store
-          # updates it); uploaded as *-msstore-setup.exe next to the others.
+          # updates it); packaged as an unsigned MSIX (the Store signs it).
           - platform: windows-latest
-            args: --features msstore --config src-tauri/tauri.msstore.conf.json
+            args: --features msstore --no-bundle
             store: msstore
     runs-on: ${{ matrix.platform }}
     steps:
@@ -94,15 +94,33 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
-      - name: Upload Store installer to the draft release
+      - name: Package MSIX and upload to the draft release
         if: matrix.store == 'msstore'
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Real values live in repo Variables (Partner Center → Product
+          # identity); the fallbacks keep CI green until they're set, but a
+          # placeholder-identity MSIX will be rejected by the Store.
+          IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME || 'SYQELINC.HZDetect' }}
+          PUBLISHER: ${{ vars.MSIX_PUBLISHER || 'CN=00000000-0000-0000-0000-000000000000' }}
+          PUBLISHER_DISPLAY: ${{ vars.MSIX_PUBLISHER_DISPLAY || 'SYQEL INC' }}
         run: |
-          $exe = Get-ChildItem source/desktop/app/src-tauri/target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
-          $new = $exe.FullName -replace '-setup\.exe$', '-msstore-setup.exe'
-          Rename-Item $exe.FullName $new
+          $ver = '${{ github.ref_name }}'.TrimStart('v') + '.0'
+          $src = 'source/desktop/app/src-tauri'
+          $stage = 'msix-stage'
+          New-Item -ItemType Directory -Path "$stage/Assets" -Force | Out-Null
+          Copy-Item "$src/target/release/HZ Detect.exe" "$stage/"
+          Copy-Item "$src/icons/Square150x150Logo.png","$src/icons/Square44x44Logo.png","$src/icons/StoreLogo.png" "$stage/Assets/"
+          (Get-Content "$src/msix/AppxManifest.template.xml" -Raw) `
+            -replace '{{IDENTITY_NAME}}', $env:IDENTITY_NAME `
+            -replace '{{PUBLISHER}}', $env:PUBLISHER `
+            -replace '{{PUBLISHER_DISPLAY}}', $env:PUBLISHER_DISPLAY `
+            -replace '{{VERSION}}', $ver | Set-Content "$stage/AppxManifest.xml" -Encoding utf8
+          $makeappx = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\makeappx.exe' | Select-Object -Last 1
+          $out = "HZ.Detect_${ver}_x64.msix"
+          & $makeappx.FullName pack /d $stage /p $out /o
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           # The draft release is created by a sibling job — wait for it.
           $tag = '${{ github.ref_name }}'
           for ($i = 0; $i -lt 30; $i++) {
@@ -110,7 +128,7 @@ jobs:
             if ($LASTEXITCODE -eq 0) { break }
             Start-Sleep -Seconds 60
           }
-          gh release upload $tag $new --repo ${{ github.repository }} --clobber
+          gh release upload $tag $out --repo ${{ github.repository }} --clobber
 
 # NOTE: bump version in desktop/app/src-tauri/tauri.conf.json (+ Cargo.toml) to match each tag.
 # The MAS build is produced separately on your Windows/Mac per the SYQEL "App Store overlay" flow.
