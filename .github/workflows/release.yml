@@ -30,7 +30,7 @@ jobs:
           # Microsoft Store flavor: self-updater compiled out (the Store
           # updates it); packaged as an unsigned MSIX (the Store signs it).
           - platform: windows-latest
-            args: --features msstore --no-bundle
+            args: --features msstore --config src-tauri/tauri.msstore.conf.json --no-bundle -- --no-default-features
             store: msstore
     runs-on: ${{ matrix.platform }}
     steps:
